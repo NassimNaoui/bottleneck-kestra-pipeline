@@ -1,0 +1,152 @@
+id: bottleneck_pipeline
+namespace: com.bottleneck.data
+description: >-
+  Réconcilie les produits ERP et web, calcule le chiffre d'affaires puis classe
+  les références premium avec un z-score strictement supérieur à 2.
+
+labels:
+  project: bottleneck
+  engine: duckdb
+
+# Repartir dans une nouvelle exécution recrée le WorkingDirectory et la base DuckDB.
+# 4 tentatives au total : 1 exécution initiale + 3 relances.
+retry:
+  type: constant
+  behavior: CREATE_NEW_EXECUTION
+  maxAttempts: 4
+  interval: PT1M
+
+# Le 15 de chaque mois à 09:00, heure de Paris (été/hiver automatiquement).
+triggers:
+  - id: monthly_15_at_09_paris
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 9 15 * *"
+    timezone: Europe/Paris
+
+tasks:
+  - id: pipeline_workdir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: stage_excel_sources
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli stage
+            --input-dir /app/project/bottleneck
+            --staging-dir staging
+
+      - id: load_raw_tables
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli sql
+            --database pipeline.duckdb
+            --script /app/project/sql/00_load_raw.sql
+            --work-dir .
+
+      - id: remove_missing_values
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli sql
+            --database pipeline.duckdb
+            --script /app/project/sql/01_remove_missing_values.sql
+            --work-dir .
+
+      - id: deduplicate_primary_keys
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli sql
+            --database pipeline.duckdb
+            --script /app/project/sql/02_deduplicate.sql
+            --work-dir .
+
+      - id: merge_erp_and_web
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli sql
+            --database pipeline.duckdb
+            --script /app/project/sql/03_merge_systems.sql
+            --work-dir .
+
+      - id: calculate_revenue
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli sql
+            --database pipeline.duckdb
+            --script /app/project/sql/04_calculate_revenue.sql
+            --work-dir .
+
+      - id: classify_wines_with_zscore
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        outputFiles:
+          - outputs/vins_premium.csv
+          - outputs/vins_ordinaires.csv
+          - outputs/zscore_metrics.json
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli segment
+            --database pipeline.duckdb
+            --output-dir outputs
+            --work-dir .
+
+      - id: export_revenue_reports
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        outputFiles:
+          - outputs/rapport_chiffre_affaires.xls
+          - outputs/rapport_chiffre_affaires.xlsx
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli export
+            --database pipeline.duckdb
+            --output-dir outputs
+            --work-dir .
+
+      - id: validate_pipeline
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        outputFiles:
+          - outputs/quality_report.json
+        commands:
+          - >-
+            /usr/bin/python3 -m data_pipeline.cli validate
+            --database pipeline.duckdb
+            --output-dir outputs
+            --work-dir .
+
+outputs:
+  - id: revenue_report_xls
+    type: FILE
+    value: "{{ outputs.export_revenue_reports.outputFiles['outputs/rapport_chiffre_affaires.xls'] }}"
+  - id: revenue_report_xlsx
+    type: FILE
+    value: "{{ outputs.export_revenue_reports.outputFiles['outputs/rapport_chiffre_affaires.xlsx'] }}"
+  - id: premium_wines
+    type: FILE
+    value: "{{ outputs.classify_wines_with_zscore.outputFiles['outputs/vins_premium.csv'] }}"
+  - id: ordinary_wines
+    type: FILE
+    value: "{{ outputs.classify_wines_with_zscore.outputFiles['outputs/vins_ordinaires.csv'] }}"
+  - id: quality_report
+    type: FILE
+    value: "{{ outputs.validate_pipeline.outputFiles['outputs/quality_report.json'] }}"

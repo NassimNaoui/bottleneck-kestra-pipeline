@@ -1,0 +1,23 @@
+services:
+  kestra:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        KESTRA_IMAGE: ${KESTRA_IMAGE:-kestra/kestra:latest}
+    image: bottleneck-kestra:local
+    user: "root"
+    command: server local
+    ports:
+      - "8080:8080"
+    volumes:
+      - kestra-data:/app/storage
+      - kestra-db:/app/data
+      - /tmp/kestra-wd:/tmp/kestra-wd
+      - ./:/app/project:ro
+    restart: unless-stopped
+
+volumes:
+  kestra-data:
+  kestra-db:
+
