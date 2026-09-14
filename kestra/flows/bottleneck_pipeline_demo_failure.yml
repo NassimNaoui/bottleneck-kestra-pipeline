@@ -1,4 +1,4 @@
-id: bottleneck_pipeline
+id: bottleneck_pipeline_demo_failure
 namespace: com.bottleneck.data
 description: >-
   Réconcilie les produits ERP et web, calcule le chiffre d'affaires puis classe
@@ -10,18 +10,18 @@ labels:
 
 # Repartir dans une nouvelle exécution recrée le WorkingDirectory et la base DuckDB.
 # 4 tentatives au total : 1 exécution initiale + 3 relances.
-retry:
-  type: constant
-  behavior: CREATE_NEW_EXECUTION
-  maxAttempts: 4
-  interval: PT1M
+# retry:
+#   type: constant
+#   behavior: CREATE_NEW_EXECUTION
+#   maxAttempts: 4
+#   interval: PT1M
 
-# Le 15 de chaque mois à 09:00, heure de Paris (été/hiver automatiquement).
-triggers:
-  - id: monthly_15_at_09_paris
-    type: io.kestra.plugin.core.trigger.Schedule
-    cron: "0 9 15 * *"
-    timezone: Europe/Paris
+# # Le 15 de chaque mois à 09:00, heure de Paris (été/hiver automatiquement).
+# triggers:
+#   - id: monthly_15_at_09_paris
+#     type: io.kestra.plugin.core.trigger.Schedule
+#     cron: "0 9 15 * *"
+#     timezone: Europe/Paris
 
 tasks:
   - id: pipeline_workdir
@@ -94,6 +94,18 @@ tasks:
             --database pipeline.duckdb
             --script /app/project/sql/03_merge_systems.sql
             --work-dir .
+
+      - id: inject_missing_product
+        type: io.kestra.plugin.scripts.python.Commands
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
+        commands:
+          - >-
+            /usr/bin/python3 -c
+            "import duckdb;
+            c = duckdb.connect('pipeline.duckdb');
+            c.execute('DELETE FROM merged_wines WHERE product_id = (SELECT MIN(product_id) FROM merged_wines)');
+            c.close()"
 
       - id: validate_merge
         type: io.kestra.plugin.scripts.python.Commands

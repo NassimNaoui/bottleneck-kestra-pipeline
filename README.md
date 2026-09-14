@@ -18,14 +18,20 @@ Avec les trois fichiers Excel fournis, le pipeline produit les résultats suivan
 
 ```mermaid
 flowchart TD
-    A["3 fichiers Excel"] --> B["Staging CSV"]
-    B --> C["Suppression des valeurs manquantes utiles"]
-    C --> D["Dédoublonnage DuckDB"]
-    D --> E["Jointure ERP → liaison → web"]
-    E --> F["CA produit et CA global"]
-    F --> G["Segmentation z-score Python"]
-    G --> H["XLS, XLSX, CSV et JSON"]
-    H --> I["Contrôles qualité"]
+    A["Excel → staging CSV → tables brutes"]
+    A --> B["Nettoyage et dédoublonnage"]
+    B --> C{"Volumes, champs et unicité"}
+    C -->|OK| D["Jointure ERP → liaison → web"]
+    D --> E{"714 lignes, clés et champs valides"}
+    E -->|OK| F["Calcul du chiffre d'affaires"]
+    F --> G{"Détail cohérent et total de 70 568,60 €"}
+    G -->|OK| H["Z-score et segmentation"]
+    H --> I{"30 premium et seuil strict > 2"}
+    I -->|OK| J["Validation globale et exports Excel"]
+    C -->|KO| K["Échec du workflow"]
+    E -->|KO| K
+    G -->|KO| K
+    I -->|KO| K
 ```
 
 La jointure suit le chemin suivant :
